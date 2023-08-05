@@ -17,7 +17,11 @@ pkg_check_modules(ZMQ REQUIRED libzmq)
 pkg_check_modules(CZMQ REQUIRED libczmq)
 pkg_check_modules(ZYRE REQUIRED libzyre)
 
-add_executable(${CMAKE_PROJECT_NAME} src/main.c)
+add_executable(${CMAKE_PROJECT_NAME}
+    src/main.c
+    src/formatter_1string.c
+    src/formatter_nstrings.c
+    )
 add_dependencies(${CMAKE_PROJECT_NAME} version)
 set_property(TARGET ${CMAKE_PROJECT_NAME} PROPERTY C_STANDARD 17)
 target_link_libraries(

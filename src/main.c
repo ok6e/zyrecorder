@@ -6,6 +6,7 @@
 #include <zyre.h>
 #include <zyre_library.h>
 #include "zyrecorder_version.h"
+#include "formatters.h"
 
 // TYPES //////////////////////////////////////////////////////////////////////
 
@@ -24,6 +25,8 @@ static zyre_t               *g_zyre         = NULL;
 static zactor_t             *g_auth         = NULL;
 static sqlite3              *g_db           = NULL;
 static sqlite3_stmt         *g_insert       = NULL;
+
+static char* (*g_formatter_func)(zmsg_t *msg) = NULL;
 
 static bool                 g_stats_enabled = false;
 static struct statistics    g_stats;
@@ -46,7 +49,8 @@ static bool record(
         const char *peer_name,
         const char *shout_group,
         const void *payload_data,
-        int payload_size
+        int payload_size,
+        const char *pretty_print
         );
 
 static unsigned long long get_time_in_microseconds(void);
@@ -71,7 +75,7 @@ int main(int argc, char *argv[])
     printf("zyrecorder (%s)\n", ZYRECORDER_VERSION);
 
     int c = 0;
-    while ((c = getopt(argc, argv, "hi:p:sv6c:C:z:")) != -1) {
+    while ((c = getopt(argc, argv, "hi:p:sv6c:C:z:f:")) != -1) {
         switch (c) {
         case 'i':
             iface = optarg;
@@ -97,6 +101,13 @@ int main(int argc, char *argv[])
         case 'z':
             curve_zap_domain = optarg;
             break;
+        case 'f': {
+            g_formatter_func = resolve_formatter_func_from_arg(optarg);
+            if (g_formatter_func == NULL) {
+                printf("Unknown formatter specified: %s\n", optarg);
+                return 1;
+            }
+                  } break;
         default:
             printf("Usage: zyrecorder [options] <file> <table> [groups...]\n");
             printf("\n");
@@ -115,6 +126,8 @@ int main(int argc, char *argv[])
             printf("                    You probably want to define option \"-C\" as well\n");
             printf("  -C <key-file>     When using CURVE, use <key-file> as our own private key\n");
             printf("  -z <zap-domain>   Set specific ZAP domain for CURVE encryption\n");
+            printf("  -f <formatter>    Use <formatter> to generate pretty-printed outputs of messages\n");
+            printf("                    Available formatters: 1string, nstrings\n");
             return 1;
         }
     }
@@ -339,7 +352,7 @@ static bool setup_database(const char *database_filename, const char *database_t
     snprintf(
             sql_buffer,
             256,
-            "CREATE TABLE IF NOT EXISTS \"%s\" (timestamp INTEGER, peer_uuid TEXT, peer_name TEXT, shout_group TEXT, payload BLOB)",
+            "CREATE TABLE IF NOT EXISTS \"%s\" (timestamp INTEGER, peer_uuid TEXT, peer_name TEXT, shout_group TEXT, payload BLOB, pretty_print TEXT)",
             database_table
             );
     rc = sqlite3_exec(g_db, sql_buffer, NULL, NULL, NULL);
@@ -356,7 +369,7 @@ static bool setup_database(const char *database_filename, const char *database_t
     snprintf(
             sql_buffer,
             256,
-            "INSERT INTO \"%s\" (timestamp, peer_uuid, peer_name, shout_group, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO \"%s\" (timestamp, peer_uuid, peer_name, shout_group, payload, pretty_print) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             database_table
             );
     rc = sqlite3_prepare_v2(g_db, sql_buffer, -1, &g_insert, NULL);
@@ -405,18 +418,23 @@ static void handle_shout_event(zyre_event_t *event)
         return;
     }
 
+    char* pretty_print = (g_formatter_func != NULL) ? (*g_formatter_func)(msg) : NULL;
+
     bool recorded_successfully = record(
             event_time,
             zyre_event_peer_uuid(event),
             zyre_event_peer_name(event),
             zyre_event_group(event),
             zframe_data(encoded_frame),
-            zframe_size(encoded_frame)
+            zframe_size(encoded_frame),
+            pretty_print
           );
 
     if (recorded_successfully && g_stats_enabled)
         g_stats.shouts_counter++;
 
+    if (pretty_print)
+        free(pretty_print);
     zframe_destroy(&encoded_frame);
     zmsg_destroy(&msg);
 }
@@ -439,18 +457,23 @@ static void handle_whisper_event(zyre_event_t *event)
         return;
     }
 
+    char* pretty_print = (g_formatter_func != NULL) ? (*g_formatter_func)(msg) : NULL;
+
     bool recorded_successfully = record(
             event_time,
             zyre_event_peer_uuid(event),
             zyre_event_peer_name(event),
             NULL,
             zframe_data(encoded_frame),
-            zframe_size(encoded_frame)
+            zframe_size(encoded_frame),
+            pretty_print
           );
 
     if (recorded_successfully && g_stats_enabled)
         g_stats.whispers_counter++;
 
+    if (pretty_print)
+        free(pretty_print);
     zframe_destroy(&encoded_frame);
     zmsg_destroy(&msg);
 }
@@ -462,7 +485,8 @@ static bool record(
         const char *peer_name,
         const char *shout_group,
         const void *payload_data,
-        int payload_size
+        int payload_size,
+        const char *pretty_print
         )
 {
     int rc0 = sqlite3_bind_int64(g_insert, 1, event_time);
@@ -474,6 +498,11 @@ static bool record(
     else
         rc3 = sqlite3_bind_null(g_insert, 4);
     int rc4 = sqlite3_bind_blob(g_insert, 5, payload_data, payload_size, SQLITE_TRANSIENT);
+    int rc5;
+    if (pretty_print)
+        rc5 = sqlite3_bind_text(g_insert, 6, pretty_print, -1, SQLITE_TRANSIENT);
+    else
+        rc5 = sqlite3_bind_null(g_insert, 6);
 
     if (
            (rc0 != SQLITE_OK) 
@@ -481,17 +510,21 @@ static bool record(
         || (rc2 != SQLITE_OK)
         || (rc3 != SQLITE_OK)
         || (rc4 != SQLITE_OK)
+        || (rc5 != SQLITE_OK)
     ) {
-        zsys_error("Failed to bind all SQL parameters");
+        zsys_error(
+                "Failed to bind all SQL parameters: %d,%d,%d,%d,%d,%d",
+                rc0, rc1, rc2, rc3, rc4, rc5
+                );
         return false;
     }
 
     bool recorded_successfully = false;
 
-    int rc5 = sqlite3_step(g_insert);
-    if (rc5 == SQLITE_DONE) {
+    int rc_step = sqlite3_step(g_insert);
+    if (rc_step == SQLITE_DONE) {
         recorded_successfully = true;
-    } else if (rc5 == SQLITE_ERROR) {
+    } else if (rc_step == SQLITE_ERROR) {
         recorded_successfully = false;
         zsys_error("Error occurred while executing prepared SQL statement: %s", sqlite3_errmsg(g_db));
     } else {
