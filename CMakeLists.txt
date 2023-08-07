@@ -19,6 +19,9 @@ pkg_check_modules(ZYRE REQUIRED libzyre)
 
 add_executable(${CMAKE_PROJECT_NAME}
     src/main.c
+    src/recorder.c
+    src/replayer.c
+    src/utils.c
     src/formatter_1string.c
     src/formatter_nstrings.c
     )
@@ -32,7 +35,7 @@ target_link_libraries(
 target_include_directories(
     ${CMAKE_PROJECT_NAME}
     PRIVATE
-    ${CMAKE_BINARY_DIR} ${ZMQ_INCLUDE_DIRS} ${CZMQ_INCLUDE_DIRS} ${ZYRE_INCLUDE_DIRS}
+    src ${CMAKE_BINARY_DIR} ${ZMQ_INCLUDE_DIRS} ${CZMQ_INCLUDE_DIRS} ${ZYRE_INCLUDE_DIRS}
     )
 target_compile_options(
     ${CMAKE_PROJECT_NAME}
