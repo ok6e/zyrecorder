@@ -10,20 +10,11 @@
 #include "recorder.h"
 #include "replayer.h"
 
-// TYPES //////////////////////////////////////////////////////////////////////
 
 enum action_t {
     ACTION_RECORD, ACTION_REPLAY
 };
 
-// FUNCTION PROTOTYPES ////////////////////////////////////////////////////////
-
-static unsigned long long get_time_in_microseconds(void);
-
-static void reset_statistics(void);
-static void print_statistics(void);
-
-// FUNCTIONS //////////////////////////////////////////////////////////////////
 
 int main(int argc, char *argv[])
 {
@@ -213,13 +204,3 @@ int main(int argc, char *argv[])
     printf("Unimplemented action\n");
     return 1;
 }
-
-
-static unsigned long long get_time_in_microseconds(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return ((unsigned long long)(tv.tv_sec) * 1000000ULL) + (unsigned long long)(tv.tv_usec);
-}
-
-
