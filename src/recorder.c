@@ -159,7 +159,7 @@ bool recorder_setup_database(recorder_t *self, const char *database_filename, co
     char sql_buffer[1024];
     snprintf(
             sql_buffer,
-            1024,
+            sizeof(sql_buffer),
             "CREATE TABLE IF NOT EXISTS \"%s\" (timestamp INTEGER, peer_uuid TEXT, peer_name TEXT, shout_group TEXT, payload BLOB, pretty_print TEXT)",
             database_table
             );
@@ -176,7 +176,7 @@ bool recorder_setup_database(recorder_t *self, const char *database_filename, co
 
     snprintf(
             sql_buffer,
-            1024,
+            sizeof(sql_buffer),
             "INSERT INTO \"%s\" (timestamp, peer_uuid, peer_name, shout_group, payload, pretty_print) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             database_table
             );

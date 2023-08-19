@@ -8,6 +8,7 @@
 #include "zyrecorder_version.h"
 #include "formatters.h"
 #include "recorder.h"
+#include "replayer.h"
 
 // TYPES //////////////////////////////////////////////////////////////////////
 
@@ -36,13 +37,14 @@ int main(int argc, char *argv[])
     char    *database_filename  = NULL;
     char    *database_table     = NULL;
     bool    enable_stats        = false;
+    int     replay_start_delay  = 2;
 
     char* (*formatter_func)(zmsg_t *msg) = NULL;
 
     printf("zyrecorder (%s)\n", ZYRECORDER_VERSION);
 
     int c = 0;
-    while ((c = getopt(argc, argv, "hi:p:sv6c:C:z:f:")) != -1) {
+    while ((c = getopt(argc, argv, "hi:p:sv6c:C:z:f:d:")) != -1) {
         switch (c) {
         case 'i':
             iface = optarg;
@@ -75,12 +77,19 @@ int main(int argc, char *argv[])
                 return 1;
             }
                   } break;
+        case 'd':
+            replay_start_delay = atoi(optarg);
+            break;
         default:
-            printf("Usage: zyrecorder [options] record <file> <table> [groups...]\n");
-            printf("       zyrecorder [options] replay <file> <table>\n");
+            printf("Usage:\n");
+            printf("  zyrecorder [options] record <file> <table> [groups...]\n");
+            printf("      Records messages from a ZMQ Zyre network into an SQLite table.\n");
+            printf("      SHOUT and WHISPER messages are both recorded.\n");
             printf("\n");
-            printf("Records messages from a ZMQ Zyre network into an SQLite file and also allows you to\n");
-            printf("replay the recorded messages from SQLite file back to the ZMQ Zyre network.");
+            printf("  zyrecorder [options] replay <file> <table>\n");
+            printf("      Replay the recorded SQLite table back to the ZMQ Zyre network.\n");
+            printf("      Messages are sent in chronological order based on the \"timestamp\" column.\n");
+            printf("      Only SHOUT messages are sent.\n");
             printf("\n");
             printf("Options:\n");
             printf("  -h                Show this help\n");
@@ -97,6 +106,8 @@ int main(int argc, char *argv[])
             printf("  -z <zap-domain>   Set specific ZAP domain for CURVE encryption\n");
             printf("  -f <formatter>    Use <formatter> to generate pretty-printed outputs of messages\n");
             printf("                    Available formatters: 1string, nstrings\n");
+            printf("  -d <seconds>      Wait before replaying to make sure all peers have been discovered first\n");
+            printf("                    Default: 2 seconds\n");
             return 1;
         }
     }
@@ -149,6 +160,7 @@ int main(int argc, char *argv[])
     optind++;
 
     if (action == ACTION_RECORD) {
+
         recorder_t *recorder = recorder_new(ipv6, verbose, udp_beacon_port, iface);
 
         if (curve) {
@@ -171,7 +183,31 @@ int main(int argc, char *argv[])
 
         recorder_destroy(&recorder);
         return rc;
+
     } else if (action == ACTION_REPLAY) {
+
+        replayer_t *replayer = replayer_new(ipv6, verbose, udp_beacon_port, iface, replay_start_delay);
+
+        if (curve) {
+            zsys_info("Enabling CURVE encryption");
+            if (!replayer_setup_curve(replayer, curve, curve_key_file, curve_zap_domain)) {
+                replayer_destroy(&replayer);
+                return 1;
+            }
+        }
+
+        if (!replayer_load_database(replayer, database_filename, database_table)) {
+            replayer_destroy(&replayer);
+            return 1;
+        }
+
+        replayer_enable_statistics(replayer, enable_stats);
+
+        int rc = replayer_run(replayer, argc, argv, optind);
+
+        replayer_destroy(&replayer);
+        return rc;
+
     }
 
     printf("Unimplemented action\n");
